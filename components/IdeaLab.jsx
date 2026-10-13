@@ -8,7 +8,7 @@ import { writingInstruction } from "../lib/writingInstruction";
 import { proofPointsBlock } from "../lib/proofPoints";
 import { parseBlocks, escHtml, blocksToHtml, blocksToPlainText } from "../lib/contentBlocks";
 import { geoCheck } from "../lib/geoCheck";
-import { MAX_FACTS, emptyFact, isIncompleteFact, approvedNumbers, approvedFactsBlock } from "../lib/approvedFacts";
+import { MAX_FACTS, MAX_USER_FACTS, emptyFact, isIncompleteFact, approvedNumbers, approvedFactsBlock, cleanUserFacts, userFactsBlock } from "../lib/approvedFacts";
 import { MAX_ATTEMPTS, validateArticle, regenerationNote } from "../lib/postCheck";
 import { normalizeContent } from "../lib/normalizeContent";
 import { extractSections, buildGraphicsPrompt, normalizePlan, resolveSlots, withImagePlaceholders, altTextList, imageSheet, TOOL_LABEL } from "../lib/graphicsPlan";
@@ -367,8 +367,8 @@ function ApprovedFactsEditor({ facts, setFacts, t }) {
   );
 }
 
-function GeoCheckCard({ content, t, compact, graphics, approvedNums }) {
-  const items = geoCheck(content, graphics, approvedNums);
+function GeoCheckCard({ content, t, compact, graphics, approvedNums, meta }) {
+  const items = geoCheck(content, graphics, approvedNums, meta);
   const passed = items.filter((x) => x.pass).length;
   return (
     <div style={compact ? { padding: "10px 14px", borderTop: "1px solid " + t.bd, background: t.cd } : { marginTop: 24, padding: 16, borderRadius: 12, background: t.cd, border: "1px solid " + t.bd }}>
@@ -446,6 +446,7 @@ export default function IdeaLab() {
   const [customTitle, setCustomTitle] = useState("");
   const [customPK, setCustomPK] = useState("");
   const [customSK, setCustomSK] = useState("");
+  const [customFacts, setCustomFacts] = useState("");
   const [approvedFacts, setApprovedFacts] = useState([emptyFact()]);
   const [customCat, setCustomCat] = useState(CATS[0]);
   const [customLoading, setCustomLoading] = useState(false);
@@ -602,11 +603,11 @@ const activeVoice =
     setOptKw(null);
     try {
       const res = await generateChecked(
-        'Blog Callbox Inc."' + customTitle + '" PK:"' + customPK + '"' + (customSK ? ' SK:"' + customSK + '"' : "") + " Cat:" + customCat + ". " + btP + " " + activeVoice + ' ONLY JSON:{meta_title(max 60 chars),meta_description(max 155 chars),excerpt,content(' + bt.min + "-" + bt.max + 'ch,"## " main headings and "### " sub-headings plus the GEO formats,' + YEAR + "),service,industries}"
+        'Blog Callbox Inc."' + customTitle + '" PK:"' + customPK + '"' + (customSK ? ' SK:"' + customSK + '"' : "") + " Cat:" + customCat + ". " + btP + " " + activeVoice + (userFactsBlock(customFacts) ? "\n\n" + userFactsBlock(customFacts) + "\n\n" : " ") + 'ONLY JSON:{meta_title(max 60 chars),meta_description(max 155 chars),excerpt,content(' + bt.min + "-" + bt.max + 'ch,"## " main headings and "### " sub-headings plus the GEO formats,' + YEAR + "),service,industries}"
       );
       if (res) {
         reportChecks(res);
-        const full = { ...stub, ...res.parsed, title: customTitle, blogType, graphics: null, savedAt: new Date().toISOString() };
+        const full = { ...stub, ...res.parsed, title: customTitle, blogType, primaryKeyword: customPK.trim(), userFacts: cleanUserFacts(customFacts), graphics: null, savedAt: new Date().toISOString() };
         setSelTopic(full);
         setBucket((prev) => {
           const ex = prev.find((b) => b.title === customTitle);
@@ -1089,7 +1090,7 @@ const activeVoice =
                     </>
                   );
                 })()}
-                {selTopic.content && <GeoCheckCard content={selTopic.content} t={t} graphics={graphics} approvedNums={approvedNumbers(approvedFacts)} />}
+                {selTopic.content && <GeoCheckCard content={selTopic.content} t={t} graphics={graphics} approvedNums={approvedNumbers(approvedFacts)} meta={{ primaryKeyword: selTopic.primaryKeyword, blogType: selTopic.blogType, userFacts: selTopic.userFacts }} />}
 
                 {selTopic.content && (
                   <div style={{ marginTop: 24, padding: 20, borderRadius: 12, background: t.cd, border: "1px solid " + t.bd }}>
@@ -1402,6 +1403,23 @@ const activeVoice =
                   </select>
                 </div>
                 <div style={{ marginBottom: 18 }}>{btSel}</div>
+                <div style={{ marginBottom: 14 }}>
+                  <label htmlFor="custom-facts" style={{ fontSize: 13, fontWeight: 600, display: "block", marginBottom: 5 }}>
+                    Facts and sources to use (optional)
+                  </label>
+                  <textarea
+                    id="custom-facts"
+                    value={customFacts}
+                    maxLength={MAX_USER_FACTS}
+                    onChange={(e) => setCustomFacts(e.target.value)}
+                    rows={5}
+                    placeholder={"One per line, with source and year. e.g. 2025 Forrester report: 68% of buyers prefer ..."}
+                    style={{ ...inpS, resize: "vertical", fontFamily: "inherit" }}
+                  />
+                  <div style={{ fontSize: 12, color: t.ts, marginTop: 4 }}>
+                    Cited exactly as written. {customFacts.length}/{MAX_USER_FACTS}
+                  </div>
+                </div>
                 <ApprovedFactsEditor facts={approvedFacts} setFacts={setApprovedFacts} t={t} />
                 <Tip text="Generate the full article using your inputs">
                   <button
@@ -1713,7 +1731,7 @@ const activeVoice =
                                 <div style={{ padding: 14, maxHeight: 300, overflowY: "auto" }}>
                                   <Content text={bpRewriteResult} t={t} />
                                 </div>
-                                <GeoCheckCard content={bpRewriteResult} t={t} compact approvedNums={approvedNumbers(approvedFacts)} />
+                                <GeoCheckCard content={bpRewriteResult} t={t} compact approvedNums={approvedNumbers(approvedFacts)} meta={{ primaryKeyword: it.primaryKeyword, blogType: it.blogType, userFacts: it.userFacts }} />
                               </div>
                             )}
                           </div>
