@@ -8,6 +8,7 @@ import { proofPointsBlock } from "../lib/proofPoints";
 import { parseBlocks, escHtml, blocksToHtml, blocksToPlainText } from "../lib/contentBlocks";
 import { geoCheck } from "../lib/geoCheck";
 import { normalizeContent } from "../lib/normalizeContent";
+import { extractSections, buildGraphicsPrompt, normalizePlan, resolveSlots, withImagePlaceholders, altTextList, imageSheet, TOOL_LABEL } from "../lib/graphicsPlan";
 
 const YEAR = new Date().getFullYear();
 const RL = { US: "🦅 US", SG: "🦁 SG", AU: "🕷️ AU" };
@@ -213,11 +214,21 @@ function parseBold(str, tx) {
   );
 }
 
-function Content({ text, t }) {
-  if (!text) return null;
+function ImagePlaceholder({ t, label }) {
   return (
-    <div>
-      {parseBlocks(text).map((b, i) => {
+    <div style={{ border: "1px dashed " + t.bd, borderRadius: 8, padding: "14px 16px", margin: "12px 0", fontSize: 12, lineHeight: 1.5, color: t.ts, textAlign: "center" }}>
+      {label}
+    </div>
+  );
+}
+
+// imageSlots: [{ n, heading, altText, dimensions, sectionIndex, stale, note }]. Preview only, never stored in the article.
+function Content({ text, t, imageSlots }) {
+  if (!text) return null;
+  const slots = Array.isArray(imageSlots) ? imageSlots : [];
+  const slotLabel = (s) => (s.stale ? "Image " + s.n + ": " + s.note : "Image " + s.n + ", " + s.dimensions + ", " + s.altText);
+  const slotEl = (s) => <ImagePlaceholder key={"img" + s.n} t={t} label={slotLabel(s)} />;
+  const renderBlock = (b, i) => {
         if (b.type === "h2") {
           return (
             <h2 key={i} style={{ fontSize: 18, fontWeight: 600, margin: "22px 0 10px", color: t.tx }}>
@@ -299,13 +310,31 @@ function Content({ text, t }) {
             {parseBold(b.text, t.tx)}
           </p>
         );
-      })}
-    </div>
-  );
+  };
+
+  // Inline placeholders go after the first paragraph under their ## heading, or at the end of the section if it has none.
+  const children = [];
+  let pending = [];
+  let ordinal = -1;
+  parseBlocks(text).forEach((b, i) => {
+    if (b.type === "h2") {
+      pending.forEach((s) => children.push(slotEl(s)));
+      ordinal += 1;
+      pending = slots.filter((s) => !s.stale && s.sectionIndex === ordinal);
+    }
+    children.push(renderBlock(b, i));
+    if (b.type === "p" && b.text.trim() && pending.length) {
+      pending.forEach((s) => children.push(slotEl(s)));
+      pending = [];
+    }
+  });
+  pending.forEach((s) => children.push(slotEl(s)));
+  slots.filter((s) => s.stale).forEach((s) => children.push(slotEl(s)));
+  return <div>{children}</div>;
 }
 
-function GeoCheckCard({ content, t, compact }) {
-  const items = geoCheck(content);
+function GeoCheckCard({ content, t, compact, graphics }) {
+  const items = geoCheck(content, graphics);
   const passed = items.filter((x) => x.pass).length;
   return (
     <div style={compact ? { padding: "10px 14px", borderTop: "1px solid " + t.bd, background: t.cd } : { marginTop: 24, padding: 16, borderRadius: 12, background: t.cd, border: "1px solid " + t.bd }}>
@@ -324,7 +353,7 @@ function GeoCheckCard({ content, t, compact }) {
           </div>
           {x.list && x.list.length > 0 && (
             <details style={{ marginLeft: 22, fontSize: 12, color: t.ts }}>
-              <summary style={{ cursor: "pointer" }}>Show sentences</summary>
+              <summary style={{ cursor: "pointer" }}>{x.listLabel || "Show sentences"}</summary>
               <ul style={{ margin: "4px 0 0", paddingLeft: 18, lineHeight: 1.6 }}>
                 {x.list.map((s, i) => (
                   <li key={i}>{s}</li>
@@ -373,6 +402,7 @@ export default function IdeaLab() {
   const [showBucket, setShowBucket] = useState(false);
   const [graphics, setGraphics] = useState(null);
   const [gfxLoading, setGfxLoading] = useState(false);
+  const [includeImgPh, setIncludeImgPh] = useState(false);
   const [optResult, setOptResult] = useState("");
   const [optLoading, setOptLoading] = useState(false);
   const [optDone, setOptDone] = useState(false);
@@ -521,7 +551,7 @@ const activeVoice =
       );
       const p = parseJSON(raw);
       if (p) {
-        const full = { ...stub, ...p, content: normalizeContent(p.content), title: customTitle, blogType, savedAt: new Date().toISOString() };
+        const full = { ...stub, ...p, content: normalizeContent(p.content), title: customTitle, blogType, graphics: null, savedAt: new Date().toISOString() };
         setSelTopic(full);
         setBucket((prev) => {
           const ex = prev.find((b) => b.title === customTitle);
@@ -576,7 +606,7 @@ const activeVoice =
       );
       const p = parseJSON(raw);
       if (p) {
-        const full = { ...stub, ...p, content: normalizeContent(p.content), blogType, savedAt: new Date().toISOString() };
+        const full = { ...stub, ...p, content: normalizeContent(p.content), blogType, graphics: null, savedAt: new Date().toISOString() };
         setSelTopic(full);
         setBucket((prev) => {
           const ex = prev.find((b) => b.title === tp.title);
@@ -597,15 +627,21 @@ const activeVoice =
     setAiError("");
     setGfxLoading(true);
     try {
-      const raw = await callAI('4 graphics:"' + selTopic.title + '".Each:{type,description,dimensions,style,ai_prompt}.ONLY JSON.', 1500, true);
+      const topic = selTopic;
+      const sections = extractSections(topic.content);
+      const typeId = topic.blogType || blogType;
+      const typeLabel = (BTYPES.find((b) => b.id === typeId) || {}).label || typeId;
+      const raw = await callAI(buildGraphicsPrompt(topic.title, typeLabel, sections), 2500, true);
       const parsed = parseJSON(raw);
-      if (Array.isArray(parsed)) setGraphics(parsed);
-      else {
-        setGraphics([]);
+      const plan = Array.isArray(parsed) ? normalizePlan(parsed, sections) : [];
+      if (plan.length) {
+        setGraphics(plan);
+        setSelTopic((prev) => (prev && prev.title === topic.title ? { ...prev, graphics: plan } : prev));
+        updateBucket({ title: topic.title, graphics: plan });
+      } else {
         unreadable();
       }
     } catch (e) {
-      setGraphics([]);
       fail(e);
     } finally {
       setGfxLoading(false);
@@ -745,9 +781,12 @@ const activeVoice =
     return d && !Number.isNaN(d.getTime()) ? " · Saved " + d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
   };
 
+  // Placeholders are added to the exported copy only when the checkbox is on; otherwise the content is untouched.
+  const exportContent = (tp) => (includeImgPh && Array.isArray(tp.graphics) && tp.graphics.length ? withImagePlaceholders(tp.content || "", tp.graphics) : tp.content || "");
+
   const dlDoc = (tp) => {
     const safeName = (tp.title || "article").replace(/[^a-z0-9 _-]/gi, "").trim().replace(/\s+/g, "-").toLowerCase();
-    const h = blocksToHtml(tp.content || "");
+    const h = blocksToHtml(exportContent(tp));
     const b = new Blob(
       ["\ufeff", "<html><head><meta charset='utf-8'></head><body style='font-family:Arial;max-width:700px;margin:40px auto;line-height:1.7'><h1>" + escHtml(tp.title || "") + "</h1>" + h + "</body></html>"],
       { type: "application/msword" }
@@ -763,13 +802,13 @@ const activeVoice =
   };
 
   const cpHtml = async (tp) => {
-    const html = blocksToHtml(tp.content || "");
+    const html = blocksToHtml(exportContent(tp));
     try {
       if (!navigator.clipboard || typeof navigator.clipboard.write !== "function" || typeof ClipboardItem === "undefined") throw new Error("unsupported");
       await navigator.clipboard.write([
         new ClipboardItem({
           "text/html": new Blob([html], { type: "text/html" }),
-          "text/plain": new Blob([blocksToPlainText(tp.content || "")], { type: "text/plain" }),
+          "text/plain": new Blob([blocksToPlainText(exportContent(tp))], { type: "text/plain" }),
         }),
       ]);
       setCopied("cpHtml");
@@ -783,7 +822,7 @@ const activeVoice =
     let x = (tp.title || "").toUpperCase() + "\n" + "=".repeat(40) + "\n\n";
     if (tp.meta_description) x += "Meta: " + tp.meta_description + "\n\n";
     if (tp.excerpt) x += tp.excerpt + "\n\n---\n\n";
-    x += blocksToPlainText(tp.content || "");
+    x += blocksToPlainText(exportContent(tp));
     x += "---\nCallbox Inc.\n";
     copyText(x, setCopied, "cpAll");
   };
@@ -801,7 +840,7 @@ const activeVoice =
     setTab(1);
     setView("detail");
     setDetailLoading(false);
-    setGraphics(null);
+    setGraphics(Array.isArray(it.graphics) && it.graphics.length ? it.graphics : null);
     setOptResult("");
     setOptKw(null);
     setOptDone(false);
@@ -981,8 +1020,17 @@ const activeVoice =
                 {selTopic.excerpt && (
                   <div style={{ fontSize: 13, fontStyle: "italic", color: t.ts, padding: "10px 14px", background: t.tb, borderRadius: 8, borderLeft: "3px solid " + t.ac, marginBottom: 18 }}>{selTopic.excerpt}</div>
                 )}
-                <Content text={selTopic.content} t={t} />
-                {selTopic.content && <GeoCheckCard content={selTopic.content} t={t} />}
+                {(() => {
+                  const slots = graphics ? resolveSlots(graphics, selTopic.content) : [];
+                  const featured = slots.find((s) => s.slot === "featured");
+                  return (
+                    <>
+                      {featured && <ImagePlaceholder t={t} label={"Featured image, " + featured.dimensions + ", " + featured.altText} />}
+                      <Content text={selTopic.content} t={t} imageSlots={slots.filter((s) => s.slot !== "featured")} />
+                    </>
+                  );
+                })()}
+                {selTopic.content && <GeoCheckCard content={selTopic.content} t={t} graphics={graphics} />}
 
                 {selTopic.content && (
                   <div style={{ marginTop: 24, padding: 20, borderRadius: 12, background: t.cd, border: "1px solid " + t.bd }}>
@@ -1043,35 +1091,84 @@ const activeVoice =
                   <div style={{ marginTop: 18, padding: 18, borderRadius: 12, background: t.cd, border: "1px solid " + t.bd }}>
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
                       <b style={{ fontSize: 14 }}>🎨 Graphics</b>
-                      {!graphics && (
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        {graphics && graphics.length > 0 && (
+                          <>
+                            <button onClick={() => copyText(altTextList(graphics), setCopied, "gAlt")} style={{ ...btnS(false), fontSize: 12 }}>
+                              {copied === "gAlt" ? "✓ Copied!" : "Copy all alt text"}
+                            </button>
+                            <button onClick={() => copyText(imageSheet(graphics, selTopic.content), setCopied, "gSheet")} style={{ ...btnS(false), fontSize: 12 }}>
+                              {copied === "gSheet" ? "✓ Copied!" : "Copy image sheet"}
+                            </button>
+                          </>
+                        )}
                         <Tip text={TOOLTIPS.graphics}>
                           <button onClick={genGraphics} disabled={gfxLoading} style={{ ...btnS(true), opacity: gfxLoading ? 0.6 : 1, fontSize: 12 }}>
-                            {gfxLoading ? "..." : "Generate"}
+                            {gfxLoading ? "..." : graphics ? "Regenerate" : "Generate"}
                           </button>
                         </Tip>
-                      )}
+                      </div>
                     </div>
                     {gfxLoading && <Loader />}
                     {graphics &&
-                      graphics.map((g, i) => (
-                        <div key={i} style={{ padding: 10, borderRadius: 8, background: t.tb, border: "1px solid " + t.bd, marginBottom: 8 }}>
-                          <b style={{ fontSize: 13, color: t.ac }}>{g.type}</b>
-                          <div style={{ fontSize: 12, color: t.ts, margin: "4px 0" }}>{g.description}</div>
-                          {g.ai_prompt && (
-                            <div style={{ position: "relative" }}>
-                              <div style={{ fontSize: 11, color: t.ts, background: isDark ? "#1a1a1a" : "#f8f8f8", padding: "8px 32px 8px 10px", borderRadius: 6, fontFamily: "monospace", lineHeight: 1.4, border: "1px solid " + t.bd, wordBreak: "break-word" }}>
-                                <b style={{ color: t.tt }}>{"// "}</b>
-                                {g.ai_prompt}
+                      (() => {
+                        const slots = resolveSlots(graphics, selTopic.content);
+                        const pillStyle = { padding: "2px 8px", borderRadius: 4, fontSize: 11, background: t.cd, border: "1px solid " + t.bd, color: t.ts };
+                        const copyBtn = (label, value, key) => (
+                          <button onClick={() => copyText(value, setCopied, key)} style={{ padding: "2px 6px", borderRadius: 4, border: "1px solid " + t.bd, background: t.cd, cursor: "pointer", fontSize: 10, color: t.tx }}>
+                            {copied === key ? "✓" : label}
+                          </button>
+                        );
+                        return graphics.map((g, i) => {
+                          const s = slots[i] || {};
+                          const isCanva = g.tool === "canva_build";
+                          return (
+                            <div key={i} style={{ padding: 10, borderRadius: 8, background: t.tb, border: "1px solid " + t.bd, marginBottom: 8 }}>
+                              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginBottom: 6 }}>
+                                <b style={{ fontSize: 13, color: t.ac }}>{g.slot === "featured" ? "Featured image" : "Image " + (i + 1)}</b>
+                                <span style={pillStyle}>{TOOL_LABEL[g.tool] || g.tool}</span>
+                                <span style={pillStyle}>{g.type}</span>
+                                <span style={pillStyle}>{g.dimensions}</span>
                               </div>
-                              <Tip text="Copy AI prompt">
-                                <button onClick={() => copyText(g.ai_prompt, setCopied, "g" + i)} style={{ position: "absolute", top: 4, right: 4, padding: "2px 6px", borderRadius: 4, border: "1px solid " + t.bd, background: t.cd, cursor: "pointer", fontSize: 10 }}>
-                                  {copied === "g" + i ? "✓" : "Copy"}
-                                </button>
-                              </Tip>
+                              {g.slot !== "featured" && (
+                                <div style={{ fontSize: 12, color: s.stale ? "#ef4444" : t.ts, marginBottom: 4 }}>
+                                  {s.stale ? s.note : "After section: " + (s.heading || g.afterHeading)}
+                                </div>
+                              )}
+                              {isCanva && g.textEquivalent === false && (
+                                <div style={{ fontSize: 12, color: "#f59e0b", marginBottom: 4 }}>This section has no figures in the text, so the graphic carries information the text does not. Add a text equivalent before publishing.</div>
+                              )}
+                              <div style={{ fontSize: 12, color: t.ts, margin: "4px 0" }}>{g.description}</div>
+                              <div style={{ fontSize: 12, color: t.tx, margin: "4px 0", display: "flex", gap: 6, alignItems: "flex-start", justifyContent: "space-between" }}>
+                                <span><b>Alt text:</b> {g.altText}</span>
+                                {copyBtn("Copy", g.altText, "ga" + i)}
+                              </div>
+                              {g.caption && (
+                                <div style={{ fontSize: 12, color: t.tx, margin: "4px 0", display: "flex", gap: 6, alignItems: "flex-start", justifyContent: "space-between" }}>
+                                  <span><b>Caption:</b> {g.caption}</span>
+                                  {copyBtn("Copy", g.caption, "gc" + i)}
+                                </div>
+                              )}
+                              {g.fileName && (
+                                <div style={{ fontSize: 12, color: t.tx, margin: "4px 0", display: "flex", gap: 6, alignItems: "flex-start", justifyContent: "space-between" }}>
+                                  <span><b>File name:</b> {g.fileName}</span>
+                                  {copyBtn("Copy", g.fileName, "gf" + i)}
+                                </div>
+                              )}
+                              {!isCanva && g.aiPrompt && (
+                                <div style={{ position: "relative", marginTop: 6 }}>
+                                  <div style={{ fontSize: 11, color: t.ts, background: isDark ? "#1a1a1a" : "#f8f8f8", padding: "8px 40px 8px 10px", borderRadius: 6, fontFamily: "monospace", lineHeight: 1.4, border: "1px solid " + t.bd, wordBreak: "break-word" }}>
+                                    <b style={{ color: t.tt }}>{"// "}</b>
+                                    {g.aiPrompt}
+                                  </div>
+                                  <div style={{ position: "absolute", top: 4, right: 4 }}>{copyBtn("Copy", g.aiPrompt, "g" + i)}</div>
+                                </div>
+                              )}
+                              {isCanva && <div style={{ fontSize: 11, color: t.ts, marginTop: 4 }}>Build this one in Canva using the description above so the numbers stay exact.</div>}
                             </div>
-                          )}
-                        </div>
-                      ))}
+                          );
+                        });
+                      })()}
                   </div>
                 )}
 
@@ -1095,6 +1192,12 @@ const activeVoice =
                         </button>
                       </Tip>
                     </div>
+                    {Array.isArray(graphics) && graphics.length > 0 && (
+                      <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, color: t.ts, cursor: "pointer" }}>
+                        <input type="checkbox" checked={includeImgPh} onChange={(e) => setIncludeImgPh(e.target.checked)} />
+                        Include image placeholders in exports
+                      </label>
+                    )}
                   </div>
                 )}
               </>
