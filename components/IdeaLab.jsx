@@ -2,6 +2,10 @@
 
 import { useState, useMemo, useRef } from "react";
 import { callAI } from "../lib/ai";
+import { GEO_RULES } from "../lib/geoRules";
+import { proofPointsBlock } from "../lib/proofPoints";
+import { parseBlocks, escHtml, blocksToHtml, blocksToPlainText } from "../lib/contentBlocks";
+import { geoCheck } from "../lib/geoCheck";
 
 const YEAR = new Date().getFullYear();
 const RL = { US: "🦅 US", SG: "🦁 SG", AU: "🕷️ AU" };
@@ -69,7 +73,7 @@ const TONES = ["Professional", "Conversational/Casual", "Informative", "Encourag
 
 const VOICE = `Role:SEO & AEO Content Strategist for Callbox Inc (callboxinc.com). Style:casual but authoritative,peer-to-peer,EEAT. Structure:Meta Title(60ch),Meta Description(155ch),H1 with primary keyword,First Fold Rule(keyword in first 50-100 words),AEO Definition Box(2-sentence Featured Snippet answer),Expert Tip callout boxes,2-3 soft CTAs + 1 hard CTA for Callbox,HubSpot stats,NEVER em dashes,Slug 3-5 words. Format:ONLY "## " headings,bold key phrases,bulleted lists.`;
 
-const VOICE_LISTICLE = `Role:SEO & AEO Content Strategist for Callbox Inc (callboxinc.com). Style:casual but authoritative,peer-to-peer,EEAT. NEVER em dashes. Format:ONLY "## " headings,bold key phrases,bulleted lists. Structure: Hook(industry pain point,2-3 sentences) -> AEO Definition Box(2-sentence Featured Snippet) -> Main Listicle Body(categorized named players with 1-2 sentence specialty descriptions per entry) -> Industry Insight callout(market stat or trend) -> Benefits/Integration section(bulleted,quantified where possible) -> Lead Gen section(what works,ABM+multi-channel+content) -> Callbox Highlight(leads the vendor section,3-5 sentences,outcome language: deals closed,leads generated,dollar amounts) -> Competitors(1-2 sentences each,niche framing only,NO head-to-head comparison,NO comparison tables,each gets their own lane) -> Expert Tip callout -> Closing CTA. Rules: Callbox always listed first in any vendor section. Competitors described by specialty/niche only never directly compared to Callbox. Only Callbox gets outcome/results language. Vendor section sandwiched between educational content and CTAs. 2-3 soft CTAs + 1 hard CTA for Callbox.`;
+const VOICE_LISTICLE = `Role:SEO & AEO Content Strategist for Callbox Inc (callboxinc.com). Style:casual but authoritative,peer-to-peer,EEAT. NEVER em dashes. Format:ONLY "## " headings,bold key phrases,bulleted lists. Structure: Hook(industry pain point,2-3 sentences) -> AEO Definition Box(2-sentence Featured Snippet) -> Main Listicle Body(categorized named players with 1-2 sentence specialty descriptions per entry) -> Industry Insight callout(market stat or trend) -> Benefits/Integration section(bulleted,quantified where possible) -> Lead Gen section(what works,ABM+multi-channel+content) -> Callbox Highlight(leads the vendor section,3-5 sentences,outcome language: deals closed,leads generated,dollar amounts) -> Competitors(1-2 sentences each,niche framing only,NO head-to-head comparison,NO comparison tables that include named competitors. Tables are allowed for non-vendor comparisons such as cost ranges or timelines. Each gets their own lane) -> Expert Tip callout -> Closing CTA. Rules: Callbox always listed first in any vendor section. Competitors described by specialty/niche only never directly compared to Callbox. Only Callbox gets outcome/results language. Vendor section sandwiched between educational content and CTAs. 2-3 soft CTAs + 1 hard CTA for Callbox.`;
 
 const VOICE_HOWTO = `Role:SEO & AEO Content Strategist for Callbox Inc (callboxinc.com). Style:casual but authoritative,conversational,peer-to-peer,EEAT. NEVER em dashes. Format:ONLY "## " headings,bold key phrases,bulleted lists. Structure: Hook(2-3 sentence conversational opener with rhetorical question addressing a real pain point) -> "What this covers" teaser(bullet list of what reader will learn) -> AEO Definition Box(direct 2-sentence answer to the core question,quotable for AI/search snippets) -> Numbered Steps or Phases(each step has a bold label + 2-3 sub-tactics or sub-points,actionable and specific) -> Key Insight callouts(standalone pull-quote lines mid-section,italicized or bold,not in a box) -> Industry-Specific Application section(tailor the how-to per vertical or use case relevant to the topic) -> Callbox reference(woven in naturally via a case study result or outcome stat,NOT a hard vendor pitch) -> FAQ section(4-6 questions,concise AEO-optimized answers,direct,no fluff) -> Closing(2-3 lines,forward-looking,motivational,no hard sell). Rules: Steps must be actionable not theoretical. Each step should answer "how exactly" not just "what". Callbox only appears once mid-article as a soft proof point and once in the final CTA. NEVER list Callbox as one of many vendors. FAQ answers must be self-contained and answer-engine ready.`;
 
@@ -208,29 +212,112 @@ function Content({ text, t }) {
   if (!text) return null;
   return (
     <div>
-      {text.split("\n").map((l, i) => {
-        if (l.startsWith("## ")) {
+      {parseBlocks(text).map((b, i) => {
+        if (b.type === "h2") {
           return (
             <h2 key={i} style={{ fontSize: 18, fontWeight: 600, margin: "22px 0 10px", color: t.tx }}>
-              {parseBold(l.slice(3), t.tx)}
+              {parseBold(b.text, t.tx)}
             </h2>
           );
         }
-        if (l.startsWith("- ")) {
+        if (b.type === "h3") {
+          return (
+            <h3 key={i} style={{ fontSize: 15, fontWeight: 600, margin: "16px 0 8px", color: t.tx }}>
+              {parseBold(b.text, t.tx)}
+            </h3>
+          );
+        }
+        if (b.type === "li") {
           return (
             <div key={i} style={{ fontSize: 14, lineHeight: 1.8, color: t.tx, paddingLeft: 16, marginBottom: 4 }}>
               {"• "}
-              {parseBold(l.slice(2), t.tx)}
+              {parseBold(b.text, t.tx)}
             </div>
           );
         }
-        if (!l.trim()) return <br key={i} />;
+        if (b.type === "quote") {
+          return (
+            <div key={i} style={{ borderLeft: "3px solid " + t.ac, background: t.tb, padding: "12px 16px", borderRadius: 8, margin: "12px 0" }}>
+              {b.lines
+                .filter((x) => x.trim())
+                .map((x, j) => (
+                  <p key={j} style={{ fontSize: 14, lineHeight: 1.8, color: t.tx, margin: j ? "6px 0 0" : 0 }}>
+                    {parseBold(x, t.tx)}
+                  </p>
+                ))}
+            </div>
+          );
+        }
+        if (b.type === "ol") {
+          return (
+            <ol key={i} style={{ fontSize: 14, lineHeight: 1.8, color: t.tx, paddingLeft: 36, margin: "8px 0 12px" }}>
+              {b.items.map((x, j) => (
+                <li key={j} style={{ marginBottom: 4 }}>
+                  {parseBold(x, t.tx)}
+                </li>
+              ))}
+            </ol>
+          );
+        }
+        if (b.type === "table") {
+          const cell = { border: "1px solid " + t.bd, padding: "8px 12px", fontSize: 13, color: t.tx, textAlign: "left", verticalAlign: "top" };
+          return (
+            <div key={i} style={{ overflowX: "auto", margin: "12px 0" }}>
+              <table style={{ borderCollapse: "collapse", width: "100%" }}>
+                <thead>
+                  <tr>
+                    {b.header.map((c, j) => (
+                      <th key={j} style={{ ...cell, background: t.tb, fontWeight: 600 }}>
+                        {parseBold(c, t.tx)}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {b.rows.map((r, ri) => (
+                    <tr key={ri}>
+                      {r.map((c, ci) => (
+                        <td key={ci} style={cell}>
+                          {parseBold(c, t.tx)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        }
+        if (b.type === "br") return <br key={i} />;
         return (
           <p key={i} style={{ fontSize: 14, lineHeight: 1.8, color: t.tx, marginBottom: 8 }}>
-            {parseBold(l, t.tx)}
+            {parseBold(b.text, t.tx)}
           </p>
         );
       })}
+    </div>
+  );
+}
+
+function GeoCheckCard({ content, t }) {
+  const items = geoCheck(content);
+  const passed = items.filter((x) => x.pass).length;
+  return (
+    <div style={{ marginTop: 24, padding: 16, borderRadius: 12, background: t.cd, border: "1px solid " + t.bd }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+        <b style={{ fontSize: 14, color: t.tx }}>AI Search (GEO) Checklist</b>
+        <span style={{ fontSize: 12, color: t.ts }}>
+          {passed}/{items.length} passed
+        </span>
+      </div>
+      {items.map((x) => (
+        <div key={x.id} style={{ display: "flex", gap: 8, alignItems: "baseline", fontSize: 12, lineHeight: 1.6, color: t.tx, marginBottom: 4 }}>
+          <span style={{ width: 14, flexShrink: 0, fontWeight: 700, color: x.pass ? t.sT : t.ts }}>{x.pass ? "✓" : "✗"}</span>
+          <span style={{ flex: 1 }}>{x.label}</span>
+          <span style={{ color: t.ts, textAlign: "right" }}>{x.detail}</span>
+        </div>
+      ))}
+      <div style={{ fontSize: 11, color: t.ts, marginTop: 8 }}>Informational only. Exports are never blocked.</div>
     </div>
   );
 }
@@ -296,8 +383,10 @@ export default function IdeaLab() {
   const t = isDark ? dk : lt;
   const bt = BTYPES.find((b) => b.id === blogType) || BTYPES[2];
   const btP = "Type:" + bt.label + " " + bt.min + "-" + bt.max + "ch.";
-  const activeVoice =
-    blogType === "listicle" ? VOICE_LISTICLE : blogType === "howto" ? VOICE_HOWTO : blogType === "strategy" ? VOICE_STRATEGY : blogType === "article" ? VOICE_ARTICLE : VOICE;
+const activeVoice =
+(blogType === "listicle" ? VOICE_LISTICLE : blogType === "howto" ? VOICE_HOWTO : blogType === "strategy" ? VOICE_STRATEGY : blogType === "article" ? VOICE_ARTICLE : VOICE) +
+(blogType === "article" ? "\n\nARTICLE ORDER: keep the punchy hook first, then place the Quick Answer within roughly the first 100 words." : "") +
+"\n\n" + GEO_RULES + "\n\n" + proofPointsBlock();
 
   const fail = (e) => setAiError((e && e.message) || "Something went wrong. Please try again.");
   const unreadable = () => setAiError("The AI response could not be read. Please try again.");
@@ -380,7 +469,7 @@ export default function IdeaLab() {
     setOptKw(null);
     try {
       const raw = await callAI(
-        'Blog Callbox Inc."' + customTitle + '" PK:"' + customPK + '"' + (customSK ? ' SK:"' + customSK + '"' : "") + " Cat:" + customCat + ". " + btP + " " + activeVoice + ' ONLY JSON:{meta_description,excerpt,content(' + bt.min + "-" + bt.max + 'ch,"## " only,' + YEAR + "),service,industries}",
+        'Blog Callbox Inc."' + customTitle + '" PK:"' + customPK + '"' + (customSK ? ' SK:"' + customSK + '"' : "") + " Cat:" + customCat + ". " + btP + " " + activeVoice + ' ONLY JSON:{meta_description,excerpt,content(' + bt.min + "-" + bt.max + 'ch,"## " headings plus the GEO formats,' + YEAR + "),service,industries}",
         4096,
         true
       );
@@ -435,7 +524,7 @@ export default function IdeaLab() {
     setOptKw(null);
     try {
       const raw = await callAI(
-        'Blog Callbox Inc."' + tp.title + '" "' + tp.hook + '" svc:' + tp.service + ". " + btP + " " + activeVoice + ' ONLY JSON:{meta_description,excerpt,content(' + bt.min + "-" + bt.max + 'ch,"## " only,' + YEAR + ")}",
+        'Blog Callbox Inc."' + tp.title + '" "' + tp.hook + '" svc:' + tp.service + ". " + btP + " " + activeVoice + ' ONLY JSON:{meta_description,excerpt,content(' + bt.min + "-" + bt.max + 'ch,"## " headings plus the GEO formats,' + YEAR + ")}",
         4096,
         true
       );
@@ -494,7 +583,7 @@ export default function IdeaLab() {
       setOptKw(kw);
       setOptResult(
         await callAI(
-          "Optimize Callbox article. De-humanize+SEO. Recs:" + ((kw && kw.recommendations) || []).join(";") + ". " + bt.label + ":" + bt.min + "-" + bt.max + 'ch. ONLY "## " headings. ONLY text.\n\n' + selTopic.content
+          "Optimize Callbox article. De-humanize+SEO. Recs:" + ((kw && kw.recommendations) || []).join(";") + ". " + bt.label + ":" + bt.min + "-" + bt.max + 'ch. ONLY "## " headings. ONLY text. GEO CHECKLIST: keep or add the 40-60 word Quick Answer blockquote near the top; each ## section starts with a direct answer sentence; paragraphs max 3 sentences; convert multi-attribute comparisons to markdown tables and processes to numbered lists; remove throat-clearing intros; do not add statistics that are not already in the article; use "> " for callouts.\n\n' + selTopic.content
         )
       );
     } catch (e) {
@@ -522,7 +611,7 @@ export default function IdeaLab() {
     const charMax = bpCharMax || item.content.length + 200;
     try {
       setBpRewriteResult(
-        await callAI("Rewrite this Callbox blog article with a " + bpTone + " tone. Target character count: " + charMin + "-" + charMax + ' characters. Keep "## " headings only. ONLY return the rewritten article text, no preamble.\n\n' + item.content)
+        await callAI("Rewrite this Callbox blog article with a " + bpTone + " tone. Target character count: " + charMin + "-" + charMax + ' characters. Keep "## " headings only. Preserve the blockquote Quick Answer, markdown tables, numbered lists and question-style headings exactly in structure. Change only tone and length. ONLY return the rewritten article text, no preamble.\n\n' + item.content)
       );
     } catch (e) {
       fail(e);
@@ -541,16 +630,15 @@ export default function IdeaLab() {
 
   const dlDoc = (tp) => {
     const safeName = (tp.title || "article").replace(/[^a-z0-9 _-]/gi, "").trim().replace(/\s+/g, "-").toLowerCase();
-    const h = (tp.content || "")
-      .split("\n")
-      .map((l) => {
-        if (l.startsWith("## ")) return "<h2>" + l.slice(3).replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>") + "</h2>";
-        const styled = l.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
-        return l.trim() ? "<p>" + styled + "</p>" : "";
-      })
-      .join("");
+    const h = blocksToHtml(tp.content || "").replace(
+      /(?:<p>- [^]*?<\/p>)+/g,
+      (run) =>
+        "<ul>" +
+        run.replace(/<p>- ([^]*?)<\/p>/g, "<li>$1</li>") +
+        "</ul>"
+    );
     const b = new Blob(
-      ["\ufeff", "<html><head><meta charset='utf-8'></head><body style='font-family:Arial;max-width:700px;margin:40px auto;line-height:1.7'><h1>" + (tp.title || "") + "</h1>" + h + "</body></html>"],
+      ["\ufeff", "<html><head><meta charset='utf-8'></head><body style='font-family:Arial;max-width:700px;margin:40px auto;line-height:1.7'><h1>" + escHtml(tp.title || "") + "</h1>" + h + "</body></html>"],
       { type: "application/msword" }
     );
     const u = URL.createObjectURL(b);
@@ -567,10 +655,7 @@ export default function IdeaLab() {
     let x = (tp.title || "").toUpperCase() + "\n" + "=".repeat(40) + "\n\n";
     if (tp.meta_description) x += "Meta: " + tp.meta_description + "\n\n";
     if (tp.excerpt) x += tp.excerpt + "\n\n---\n\n";
-    (tp.content || "").split("\n").forEach((l) => {
-      if (l.startsWith("## ")) x += "\n" + l.slice(3).toUpperCase() + "\n---\n\n";
-      else if (l.trim()) x += l + "\n\n";
-    });
+    x += blocksToPlainText(tp.content || "");
     x += "---\nCallbox Inc.\n";
     copyText(x, setCopied, "cpAll");
   };
@@ -769,6 +854,7 @@ export default function IdeaLab() {
                   <div style={{ fontSize: 13, fontStyle: "italic", color: t.ts, padding: "10px 14px", background: t.tb, borderRadius: 8, borderLeft: "3px solid " + t.ac, marginBottom: 18 }}>{selTopic.excerpt}</div>
                 )}
                 <Content text={selTopic.content} t={t} />
+                {selTopic.content && <GeoCheckCard content={selTopic.content} t={t} />}
 
                 {selTopic.content && (
                   <div style={{ marginTop: 24, padding: 20, borderRadius: 12, background: t.cd, border: "1px solid " + t.bd }}>
@@ -1274,7 +1360,7 @@ export default function IdeaLab() {
 
         {tab === 3 && (
           <div>
-            <b style={{ fontSize: 16 }}>🔢 Character Counter</b>
+            <b style={{ fontSize: 16 }}>�� Character Counter</b>
             <div style={{ display: "flex", gap: 10, margin: "14px 0" }}>
               {[
                 ["Characters", cStats.c, "Total number of characters"],
