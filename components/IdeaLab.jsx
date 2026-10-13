@@ -71,7 +71,10 @@ const BTYPES = [
   { id: "article", label: "Article", min: 500, max: 800 },
   { id: "strategy", label: "Strategy", min: 1800, max: 2000 },
 ];
-const TONES = ["Professional", "Conversational/Casual", "Informative", "Encouraging/Positive", "Witty/Humorous", "Assertive/Confident"];
+const BP_CUSTOM_MAX = 1000;
+const BP_CUSTOM_CHIPS = ["Shorten the introduction", "Add a comparison table", "Make the closing CTA softer", "Add a short FAQ section", "Simplify the wording"];
+const KEEP_TONE = "Keep current tone";
+const TONES = [KEEP_TONE, "Professional", "Conversational/Casual", "Informative", "Encouraging/Positive", "Witty/Humorous", "Assertive/Confident"];
 
 const VOICE = `Role:SEO & AEO Content Strategist for Callbox Inc (callboxinc.com). Style:casual but authoritative,peer-to-peer,EEAT. Structure:Meta Title(60ch),Meta Description(155ch),H1 with primary keyword,First Fold Rule(keyword in first 50-100 words),AEO Definition Box(2-sentence Featured Snippet answer),Expert Tip callout boxes,2-3 soft CTAs + 1 hard CTA for Callbox,sourced third-party statistics (source and year in the same sentence) or qualitative statements,NEVER em dashes,Slug 3-5 words. Format:"## " main headings and "### " sub-headings,bold key phrases,bulleted lists.`;
 
@@ -385,7 +388,9 @@ export default function IdeaLab() {
   const [abSvc, setAbSvc] = useState("Any");
   const [abLoading, setAbLoading] = useState(false);
   const [blogType, setBlogType] = useState("article");
-  const [bpTone, setBpTone] = useState("Professional");
+  const [bpTone, setBpTone] = useState(KEEP_TONE);
+  const [bpCustom, setBpCustom] = useState("");
+  const [bpUsedCustom, setBpUsedCustom] = useState("");
   const [bpCharMin, setBpCharMin] = useState(null);
   const [bpCharMax, setBpCharMax] = useState(null);
   const [bpRewriting, setBpRewriting] = useState(false);
@@ -650,22 +655,41 @@ const activeVoice =
     setBpRewriteDone(false);
     const charMin = bpCharMin || item.content.length - 200;
     const charMax = bpCharMax || item.content.length + 200;
+    const custom = bpCustom
+      .replace(/\r\n?/g, "\n")
+      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+      .replace(/"{3,}/g, '"')
+      .trim()
+      .slice(0, BP_CUSTOM_MAX);
+    setBpUsedCustom(custom);
     try {
       const itemType = item.blogType ? BTYPES.find((b) => b.id === item.blogType) : null;
       const typeLine = itemType ? "This is a " + itemType.label + " blog. Keep its type-specific structure and rules.\n\n" : "";
+      const toneLine = bpTone === KEEP_TONE ? "Rewrite this Callbox blog article. Keep the article's existing tone." : "Rewrite this Callbox blog article with a " + bpTone + " tone.";
+      const figureSource = custom ? "the original text or in the USER INSTRUCTIONS below" : "the original text";
       const factLock =
-        "FACT LOCK: Do not add, remove, round or change any number, percentage, dollar amount, company name, client name or claim. Every figure in the output must already appear in the original text. Do not add new mentions of Callbox beyond the original count. Keep the first sentence of each ## section a direct answer. When shortening to fit the character range, cut descriptive body sentences first and never cut the Quick Answer, tables, numbered lists, FAQ, or the closing call to action. When lengthening, add explanation only, never new statistics.";
+        "FACT LOCK: Do not add, remove, round or change any number, percentage, dollar amount, company name, client name or claim. Every figure in the output must already appear in " +
+        figureSource +
+        ". Do not add new mentions of Callbox beyond the original count. Keep the first sentence of each ## section a direct answer. When shortening to fit the character range, cut descriptive body sentences first and never cut the Quick Answer, tables, numbered lists, FAQ, or the closing call to action. When lengthening, add explanation only, never new statistics.";
+      const customBlock = custom
+        ? "\n\nUSER INSTRUCTIONS (follow these closely, even where they change structure, emphasis, length of a section, or the Callbox mention count; the only things they cannot override are FACT LOCK and the ban on inventing claims. If an instruction contains a number, name or claim, you may use it exactly as written, since the user supplied it):\n\"\"\"\n" +
+          custom +
+          '\n"""'
+        : "";
+      const changeLine = custom ? "Change only tone and length, plus anything the USER INSTRUCTIONS below explicitly ask for." : "Change only tone and length.";
       setBpRewriteResult(
         normalizeContent(await callAI(
           typeLine +
-            "Rewrite this Callbox blog article with a " +
-            bpTone +
-            " tone. Target character count: " +
+            toneLine +
+            " Target character count: " +
             charMin +
             "-" +
             charMax +
-            ' characters. Keep the existing structure ("## " main sections, "### " sub-points, "> " callouts, markdown tables, numbered lists). Preserve the blockquote Quick Answer, markdown tables, numbered lists and question-style headings exactly in structure. Change only tone and length. ONLY return the rewritten article text, no preamble.\n\n' +
+            ' characters. Keep the existing structure ("## " main sections, "### " sub-points, "> " callouts, markdown tables, numbered lists). Preserve the blockquote Quick Answer, markdown tables, numbered lists and question-style headings exactly in structure. ' +
+            changeLine +
+            " ONLY return the rewritten article text, no preamble.\n\n" +
             factLock +
+            customBlock +
             "\n\n" +
             item.content
         ))
@@ -1444,6 +1468,44 @@ const activeVoice =
                                 </Tip>
                               </div>
                             </div>
+                            <div style={{ marginBottom: 14 }}>
+                              <label style={{ fontSize: 12, fontWeight: 600, display: "block", marginBottom: 5, color: t.ts }}>Custom instructions (optional)</label>
+                              <Tip text="Extra instructions for this rewrite. They can change structure or emphasis but cannot change facts or numbers.">
+                                <textarea
+                                  value={bpCustom}
+                                  maxLength={BP_CUSTOM_MAX}
+                                  rows={3}
+                                  onChange={(e) => {
+                                    setBpCustom(e.target.value.slice(0, BP_CUSTOM_MAX));
+                                    setBpRewriteResult("");
+                                    setBpRewriteDone(false);
+                                  }}
+                                  placeholder="e.g. Make the introduction shorter, add a comparison table for pricing, soften the closing call to action"
+                                  style={{ ...inpS, resize: "vertical", fontFamily: "inherit" }}
+                                />
+                              </Tip>
+                              <div style={{ fontSize: 11, color: t.ts, marginTop: 4, textAlign: "right" }}>
+                                {bpCustom.length}/{BP_CUSTOM_MAX}
+                              </div>
+                              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+                                {BP_CUSTOM_CHIPS.map((chip) => (
+                                  <button
+                                    key={chip}
+                                    type="button"
+                                    onClick={() => {
+                                      const next = bpCustom ? bpCustom + "\n" + chip : chip;
+                                      if (next.length > BP_CUSTOM_MAX) return;
+                                      setBpCustom(next);
+                                      setBpRewriteResult("");
+                                      setBpRewriteDone(false);
+                                    }}
+                                    style={{ ...btnS(false), fontSize: 11, padding: "3px 8px" }}
+                                  >
+                                    {chip}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
                             <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
                               <Tip text={TOOLTIPS.rewrite}>
                                 <button
@@ -1473,6 +1535,9 @@ const activeVoice =
                                 <div style={{ padding: "8px 14px", borderBottom: "1px solid " + t.bd, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                                   <span style={{ fontSize: 12, fontWeight: 600 }}>
                                     Preview · {bpRewriteResult.length} chars · {bpTone}
+                                    {bpUsedCustom && (
+                                      <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 600, padding: "2px 6px", borderRadius: 4, border: "1px solid " + t.bd, color: t.ts }}>custom instructions applied</span>
+                                    )}
                                   </span>
                                   <Tip text="Copy rewritten content">
                                     <button onClick={() => copyText(bpRewriteResult, setCopied, "bpCp_" + i)} style={{ ...btnS(false), fontSize: 11, padding: "3px 8px" }}>
