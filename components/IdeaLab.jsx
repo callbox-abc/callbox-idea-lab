@@ -4,6 +4,7 @@ import { useState, useMemo, useRef, useEffect } from "react";
 import { loadDrafts, saveDrafts, exportDrafts, parseImport } from "../lib/draftStore";
 import { callAI } from "../lib/ai";
 import { GEO_RULES } from "../lib/geoRules";
+import { writingInstruction } from "../lib/writingInstruction";
 import { proofPointsBlock } from "../lib/proofPoints";
 import { parseBlocks, escHtml, blocksToHtml, blocksToPlainText } from "../lib/contentBlocks";
 import { geoCheck } from "../lib/geoCheck";
@@ -461,7 +462,7 @@ export default function IdeaLab() {
 const activeVoice =
 (blogType === "listicle" ? VOICE_LISTICLE : blogType === "howto" ? VOICE_HOWTO : blogType === "strategy" ? VOICE_STRATEGY : blogType === "article" ? VOICE_ARTICLE : VOICE) +
 (blogType === "article" ? "\n\nARTICLE ORDER: keep the punchy hook first, then place the Quick Answer within roughly the first 100 words." : "") +
-"\n\n" + GEO_RULES + "\n\n" + proofPointsBlock();
+"\n\n" + GEO_RULES + "\n\n" + writingInstruction(new Date().toLocaleString("en-US", { month: "long", year: "numeric" })) + "\n\n" + proofPointsBlock();
 
   const fail = (e) => setAiError((e && e.message) || "Something went wrong. Please try again.");
   const unreadable = () => setAiError("The AI response could not be read. Please try again.");
