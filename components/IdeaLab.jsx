@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
+import { loadDrafts, saveDrafts, exportDrafts, parseImport } from "../lib/draftStore";
 import { callAI } from "../lib/ai";
 import { GEO_RULES } from "../lib/geoRules";
 import { proofPointsBlock } from "../lib/proofPoints";
@@ -299,11 +300,11 @@ function Content({ text, t }) {
   );
 }
 
-function GeoCheckCard({ content, t }) {
+function GeoCheckCard({ content, t, compact }) {
   const items = geoCheck(content);
   const passed = items.filter((x) => x.pass).length;
   return (
-    <div style={{ marginTop: 24, padding: 16, borderRadius: 12, background: t.cd, border: "1px solid " + t.bd }}>
+    <div style={compact ? { padding: "10px 14px", borderTop: "1px solid " + t.bd, background: t.cd } : { marginTop: 24, padding: 16, borderRadius: 12, background: t.cd, border: "1px solid " + t.bd }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
         <b style={{ fontSize: 14, color: t.tx }}>AI Search (GEO) Checklist</b>
         <span style={{ fontSize: 12, color: t.ts }}>
@@ -317,7 +318,7 @@ function GeoCheckCard({ content, t }) {
           <span style={{ color: t.ts, textAlign: "right" }}>{x.detail}</span>
         </div>
       ))}
-      <div style={{ fontSize: 11, color: t.ts, marginTop: 8 }}>Informational only. Exports are never blocked.</div>
+      <div style={{ fontSize: 11, color: t.ts, marginTop: 8 }}>{compact ? "Informational only. Apply is never blocked." : "Informational only. Exports are never blocked."}</div>
     </div>
   );
 }
@@ -379,6 +380,32 @@ export default function IdeaLab() {
   const [bpRewriteDone, setBpRewriteDone] = useState(false);
   const [bpSelTitle, setBpSelTitle] = useState(null);
   const [aiError, setAiError] = useState("");
+  const [hydrated, setHydrated] = useState(false);
+  const [storageError, setStorageError] = useState("");
+  const [draftNotice, setDraftNotice] = useState("");
+  const saveFailedRef = useRef(false);
+  const importInputRef = useRef(null);
+
+  useEffect(() => {
+    // localStorage is only readable after mount; loading in render would break SSR hydration.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setBucket(loadDrafts());
+    setHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return undefined;
+    const timer = setTimeout(() => {
+      const res = saveDrafts(bucket);
+      if (res.ok) {
+        saveFailedRef.current = false;
+      } else if (!saveFailedRef.current) {
+        saveFailedRef.current = true;
+        setStorageError("Could not save drafts in this browser (storage full or blocked). Use Export drafts to keep a copy.");
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [bucket, hydrated]);
 
   const t = isDark ? dk : lt;
   const bt = BTYPES.find((b) => b.id === blogType) || BTYPES[2];
@@ -423,11 +450,12 @@ const activeVoice =
     </div>
   );
 
-  const errBanner = aiError ? (
+  const bannerMsg = aiError || storageError;
+  const errBanner = bannerMsg ? (
     <div style={mx}>
       <div style={{ margin: "12px 18px 0", padding: "10px 14px", borderRadius: 8, background: "#7f1d1d", color: "#fecaca", fontSize: 13, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
-        <span>⚠️ {aiError}</span>
-        <button onClick={() => setAiError("")} style={{ background: "none", border: "none", color: "#fecaca", cursor: "pointer", fontSize: 16 }}>
+        <span>⚠️ {bannerMsg}</span>
+        <button onClick={() => (aiError ? setAiError("") : setStorageError(""))} style={{ background: "none", border: "none", color: "#fecaca", cursor: "pointer", fontSize: 16 }}>
           ✕
         </button>
       </div>
@@ -475,7 +503,7 @@ const activeVoice =
       );
       const p = parseJSON(raw);
       if (p) {
-        const full = { ...stub, ...p, title: customTitle };
+        const full = { ...stub, ...p, title: customTitle, blogType, savedAt: new Date().toISOString() };
         setSelTopic(full);
         setBucket((prev) => {
           const ex = prev.find((b) => b.title === customTitle);
@@ -530,7 +558,7 @@ const activeVoice =
       );
       const p = parseJSON(raw);
       if (p) {
-        const full = { ...stub, ...p };
+        const full = { ...stub, ...p, blogType, savedAt: new Date().toISOString() };
         setSelTopic(full);
         setBucket((prev) => {
           const ex = prev.find((b) => b.title === tp.title);
@@ -595,7 +623,7 @@ const activeVoice =
 
   const applyOpt = () => {
     if (!selTopic || !optResult) return;
-    const updated = { ...selTopic, content: optResult };
+    const updated = { ...selTopic, content: optResult, savedAt: new Date().toISOString() };
     setSelTopic(updated);
     updateBucket(updated);
     setOptDone(true);
@@ -610,8 +638,24 @@ const activeVoice =
     const charMin = bpCharMin || item.content.length - 200;
     const charMax = bpCharMax || item.content.length + 200;
     try {
+      const itemType = item.blogType ? BTYPES.find((b) => b.id === item.blogType) : null;
+      const typeLine = itemType ? "This is a " + itemType.label + " blog. Keep its type-specific structure and rules.\n\n" : "";
+      const factLock =
+        "FACT LOCK: Do not add, remove, round or change any number, percentage, dollar amount, company name, client name or claim. Every figure in the output must already appear in the original text. Do not add new mentions of Callbox beyond the original count. Keep the first sentence of each ## section a direct answer. When shortening to fit the character range, cut descriptive body sentences first and never cut the Quick Answer, tables, numbered lists, FAQ, or the closing call to action. When lengthening, add explanation only, never new statistics.";
       setBpRewriteResult(
-        await callAI("Rewrite this Callbox blog article with a " + bpTone + " tone. Target character count: " + charMin + "-" + charMax + ' characters. Keep "## " headings only. Preserve the blockquote Quick Answer, markdown tables, numbered lists and question-style headings exactly in structure. Change only tone and length. ONLY return the rewritten article text, no preamble.\n\n' + item.content)
+        await callAI(
+          typeLine +
+            "Rewrite this Callbox blog article with a " +
+            bpTone +
+            " tone. Target character count: " +
+            charMin +
+            "-" +
+            charMax +
+            ' characters. Keep the existing structure ("## " main sections, "### " sub-points, "> " callouts, markdown tables, numbered lists). Preserve the blockquote Quick Answer, markdown tables, numbered lists and question-style headings exactly in structure. Change only tone and length. ONLY return the rewritten article text, no preamble.\n\n' +
+            factLock +
+            "\n\n" +
+            item.content
+        )
       );
     } catch (e) {
       fail(e);
@@ -622,10 +666,46 @@ const activeVoice =
 
   const applyBpRewrite = (item) => {
     if (!bpRewriteResult) return;
-    const updated = { ...item, content: bpRewriteResult };
+    const updated = { ...item, content: bpRewriteResult, savedAt: new Date().toISOString() };
     updateBucket(updated);
     if (selTopic?.title === item.title) setSelTopic(updated);
     setBpRewriteDone(true);
+  };
+
+  const onImportFile = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    setDraftNotice("");
+    const res = file.size > 5 * 1024 * 1024 ? { ok: false, error: "The file is larger than 5 MB." } : parseImport(await file.text());
+    if (!res.ok) {
+      setAiError(res.error);
+      return;
+    }
+    const stamp = (v) => (v && Date.parse(v)) || 0;
+    setBucket((prev) => {
+      const next = [...prev];
+      res.drafts.forEach((d) => {
+        const idx = next.findIndex((b) => b.title === d.title);
+        if (idx < 0) next.push(d);
+        else if (stamp(d.savedAt) > stamp(next[idx].savedAt)) next[idx] = d;
+      });
+      return next;
+    });
+    setDraftNotice("Imported " + res.drafts.length + (res.drafts.length === 1 ? " draft" : " drafts"));
+    setTimeout(() => setDraftNotice(""), 4000);
+  };
+
+  const clearAllDrafts = () => {
+    if (!window.confirm("Remove all saved articles from this browser?")) return;
+    setBucket([]);
+    setBpSelTitle(null);
+    setDraftNotice("");
+  };
+
+  const savedLabel = (iso) => {
+    const d = iso ? new Date(iso) : null;
+    return d && !Number.isNaN(d.getTime()) ? " · Saved " + d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
   };
 
   const dlDoc = (tp) => {
@@ -1195,6 +1275,33 @@ const activeVoice =
         {tab === 2 && (
           <div>
             <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 16 }}>📦 Blog Packed</div>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 14 }}>
+              <span style={{ fontSize: 12, color: t.ts, marginRight: "auto" }}>
+                Saved in this browser only · {bucket.length} {bucket.length === 1 ? "draft" : "drafts"}
+                {draftNotice && <b style={{ marginLeft: 10, color: t.sT }}>{draftNotice}</b>}
+              </span>
+              <Tip text="Download all saved articles as a JSON backup">
+                <button
+                  onClick={() => {
+                    const res = exportDrafts(bucket);
+                    if (!res.ok) setAiError(res.error);
+                  }}
+                  disabled={!bucket.length}
+                  style={{ ...btnS(false), fontSize: 11, padding: "4px 10px", opacity: bucket.length ? 1 : 0.5, cursor: bucket.length ? "pointer" : "not-allowed" }}
+                >
+                  Export drafts
+                </button>
+              </Tip>
+              <Tip text="Load articles from a JSON backup">
+                <button onClick={() => importInputRef.current && importInputRef.current.click()} style={{ ...btnS(false), fontSize: 11, padding: "4px 10px" }}>
+                  Import drafts
+                </button>
+              </Tip>
+              <input ref={importInputRef} type="file" accept=".json,application/json" onChange={onImportFile} style={{ display: "none" }} />
+              <button onClick={clearAllDrafts} disabled={!bucket.length} style={{ ...btnS(false), fontSize: 11, padding: "4px 10px", color: "#ef4444", opacity: bucket.length ? 1 : 0.5, cursor: bucket.length ? "pointer" : "not-allowed" }}>
+                Clear all
+              </button>
+            </div>
             {!bucket.filter((b) => b.content).length ? (
               <div style={{ textAlign: "center", padding: 40, color: t.ts, border: "2px dashed " + t.bd, borderRadius: 12 }}>
                 {"⭐ No articles yet. Generate one in \"Let's Generate!\""}
@@ -1212,6 +1319,7 @@ const activeVoice =
                             <div style={{ fontSize: 15, fontWeight: 600 }}>{it.title}</div>
                             <div style={{ fontSize: 12, color: t.ts, marginTop: 3 }}>
                               {it.service} · {it.content.length} chars
+                              {savedLabel(it.savedAt)}
                             </div>
                           </div>
                           <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -1346,6 +1454,7 @@ const activeVoice =
                                 <div style={{ padding: 14, maxHeight: 300, overflowY: "auto" }}>
                                   <Content text={bpRewriteResult} t={t} />
                                 </div>
+                                <GeoCheckCard content={bpRewriteResult} t={t} compact />
                               </div>
                             )}
                           </div>
