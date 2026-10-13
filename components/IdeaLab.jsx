@@ -7,6 +7,7 @@ import { GEO_RULES } from "../lib/geoRules";
 import { proofPointsBlock } from "../lib/proofPoints";
 import { parseBlocks, escHtml, blocksToHtml, blocksToPlainText } from "../lib/contentBlocks";
 import { geoCheck } from "../lib/geoCheck";
+import { normalizeContent } from "../lib/normalizeContent";
 
 const YEAR = new Date().getFullYear();
 const RL = { US: "🦅 US", SG: "🦁 SG", AU: "🕷️ AU" };
@@ -72,15 +73,15 @@ const BTYPES = [
 ];
 const TONES = ["Professional", "Conversational/Casual", "Informative", "Encouraging/Positive", "Witty/Humorous", "Assertive/Confident"];
 
-const VOICE = `Role:SEO & AEO Content Strategist for Callbox Inc (callboxinc.com). Style:casual but authoritative,peer-to-peer,EEAT. Structure:Meta Title(60ch),Meta Description(155ch),H1 with primary keyword,First Fold Rule(keyword in first 50-100 words),AEO Definition Box(2-sentence Featured Snippet answer),Expert Tip callout boxes,2-3 soft CTAs + 1 hard CTA for Callbox,HubSpot stats,NEVER em dashes,Slug 3-5 words. Format:ONLY "## " headings,bold key phrases,bulleted lists.`;
+const VOICE = `Role:SEO & AEO Content Strategist for Callbox Inc (callboxinc.com). Style:casual but authoritative,peer-to-peer,EEAT. Structure:Meta Title(60ch),Meta Description(155ch),H1 with primary keyword,First Fold Rule(keyword in first 50-100 words),AEO Definition Box(2-sentence Featured Snippet answer),Expert Tip callout boxes,2-3 soft CTAs + 1 hard CTA for Callbox,sourced third-party statistics (source and year in the same sentence) or qualitative statements,NEVER em dashes,Slug 3-5 words. Format:"## " main headings and "### " sub-headings,bold key phrases,bulleted lists.`;
 
-const VOICE_LISTICLE = `Role:SEO & AEO Content Strategist for Callbox Inc (callboxinc.com). Style:casual but authoritative,peer-to-peer,EEAT. NEVER em dashes. Format:ONLY "## " headings,bold key phrases,bulleted lists. Structure: Hook(industry pain point,2-3 sentences) -> AEO Definition Box(2-sentence Featured Snippet) -> Main Listicle Body(categorized named players with 1-2 sentence specialty descriptions per entry) -> Industry Insight callout(market stat or trend) -> Benefits/Integration section(bulleted,quantified where possible) -> Lead Gen section(what works,ABM+multi-channel+content) -> Callbox Highlight(leads the vendor section,3-5 sentences,outcome language: deals closed,leads generated,dollar amounts) -> Competitors(1-2 sentences each,niche framing only,NO head-to-head comparison,NO comparison tables that include named competitors. Tables are allowed for non-vendor comparisons such as cost ranges or timelines. Each gets their own lane) -> Expert Tip callout -> Closing CTA. Rules: Callbox always listed first in any vendor section. Competitors described by specialty/niche only never directly compared to Callbox. Only Callbox gets outcome/results language. Vendor section sandwiched between educational content and CTAs. 2-3 soft CTAs + 1 hard CTA for Callbox.`;
+const VOICE_LISTICLE = `Role:SEO & AEO Content Strategist for Callbox Inc (callboxinc.com). Style:casual but authoritative,peer-to-peer,EEAT. NEVER em dashes. Format:"## " main headings and "### " sub-headings,bold key phrases,bulleted lists. Structure: Hook(industry pain point,2-3 sentences) -> AEO Definition Box(2-sentence Featured Snippet) -> Main Listicle Body(categorized named players with 1-2 sentence specialty descriptions per entry) -> Industry Insight callout (a sourced third-party statistic with source and year, or a qualitative trend if none is certain) -> Benefits/Integration section (bulleted; quantify only with provided proof points or sourced statistics, otherwise describe benefits qualitatively) -> Lead Gen section(what works,ABM+multi-channel+content) -> Callbox Highlight(leads the vendor section,3-5 sentences,outcome language using only figures from CALLBOX PROOF POINTS: deals closed,leads generated,dollar amounts) -> Competitors(1-2 sentences each,niche framing only,NO head-to-head comparison,NO comparison tables that include named competitors. Tables are allowed for non-vendor comparisons such as cost ranges or timelines. Each gets their own lane) -> Expert Tip callout -> Closing CTA. Rules: Callbox always listed first in any vendor section. Competitors described by specialty/niche only never directly compared to Callbox. Only Callbox gets outcome/results language. Vendor section sandwiched between educational content and CTAs. 2-3 soft CTAs + 1 hard CTA for Callbox.`;
 
-const VOICE_HOWTO = `Role:SEO & AEO Content Strategist for Callbox Inc (callboxinc.com). Style:casual but authoritative,conversational,peer-to-peer,EEAT. NEVER em dashes. Format:ONLY "## " headings,bold key phrases,bulleted lists. Structure: Hook(2-3 sentence conversational opener with rhetorical question addressing a real pain point) -> "What this covers" teaser(bullet list of what reader will learn) -> AEO Definition Box(direct 2-sentence answer to the core question,quotable for AI/search snippets) -> Numbered Steps or Phases(each step has a bold label + 2-3 sub-tactics or sub-points,actionable and specific) -> Key Insight callouts(standalone pull-quote lines mid-section,italicized or bold,not in a box) -> Industry-Specific Application section(tailor the how-to per vertical or use case relevant to the topic) -> Callbox reference(woven in naturally via a case study result or outcome stat,NOT a hard vendor pitch) -> FAQ section(4-6 questions,concise AEO-optimized answers,direct,no fluff) -> Closing(2-3 lines,forward-looking,motivational,no hard sell). Rules: Steps must be actionable not theoretical. Each step should answer "how exactly" not just "what". Callbox only appears once mid-article as a soft proof point and once in the final CTA. NEVER list Callbox as one of many vendors. FAQ answers must be self-contained and answer-engine ready.`;
+const VOICE_HOWTO = `Role:SEO & AEO Content Strategist for Callbox Inc (callboxinc.com). Style:casual but authoritative,conversational,peer-to-peer,EEAT. NEVER em dashes. Format:"## " main headings and "### " sub-headings,bold key phrases,bulleted lists. Structure: Hook(2-3 sentence conversational opener with rhetorical question addressing a real pain point) -> "What this covers" teaser(bullet list of what reader will learn) -> AEO Definition Box(direct 2-sentence answer to the core question,quotable for AI/search snippets) -> Numbered Steps or Phases(each step has a bold label + 2-3 sub-tactics or sub-points,actionable and specific) -> Key Insight callouts(standalone pull-quote lines mid-section,italicized or bold,not in a box) -> Industry-Specific Application section(tailor the how-to per vertical or use case relevant to the topic) -> Callbox reference(woven in naturally via a case study result or outcome stat taken only from CALLBOX PROOF POINTS,NOT a hard vendor pitch) -> FAQ section(4-6 questions,concise AEO-optimized answers,direct,no fluff) -> Closing(2-3 lines,forward-looking,motivational,no hard sell). Rules: Steps must be actionable not theoretical. Each step should answer "how exactly" not just "what". Callbox only appears once mid-article as a soft proof point and once in the final CTA. NEVER list Callbox as one of many vendors. FAQ answers must be self-contained and answer-engine ready.`;
 
-const VOICE_STRATEGY = `Role:SEO & AEO Content Strategist for Callbox Inc (callboxinc.com). Style:authoritative,data-forward,market-intelligence tone,EEAT. NEVER em dashes. Format:ONLY "## " headings,bold key phrases,bulleted lists. Structure: Opening(2-3 sentences,authoritative market context,NO rhetorical question,1 strong stat or market fact in first 50-100 words) -> "What this Guide Covers" section(short paragraph or bullet list framing the scope and who it is for) -> "Why This Matters in [YEAR]" section(market forces + competitive pressures + buyer behavior shifts,2-3 bullets or short paragraphs,data-backed) -> Core Strategy Pillars(4-6 named pillars or trends,NOT numbered steps,each has bold sub-label + 2-3 paragraphs + supporting data or insight callout) -> Key Insight callouts(standalone data lines mid-section,format: bold stat + 1-sentence context) -> Industry or Regional Application section(contextualizes strategy for a specific market,vertical,or geography relevant to the topic) -> "Key Takeaways" section(3-5 bullets or short paragraphs,forward-looking,synthesizes the pillars) -> Callbox closing CTA(positioned as a trusted long-term partner,references multichannel approach + proven results,NEVER listed among competitors,1 hard CTA). Rules: NO FAQ section. Strategy blogs close with Key Takeaways then Callbox CTA only. Stats must appear in at least 3 sections. Each pillar must connect back to business growth or pipeline impact. Callbox appears only in the closing section.`;
+const VOICE_STRATEGY = `Role:SEO & AEO Content Strategist for Callbox Inc (callboxinc.com). Style:authoritative,data-forward,market-intelligence tone,EEAT. NEVER em dashes. Format:"## " main headings and "### " sub-headings,bold key phrases,bulleted lists. Structure: Opening(2-3 sentences,authoritative market context,NO rhetorical question,1 sourced third-party statistic (source and year in the same sentence) or a qualitative market fact in first 50-100 words) -> "What this Guide Covers" section(short paragraph or bullet list framing the scope and who it is for) -> "Why This Matters in [YEAR]" section(market forces + competitive pressures + buyer behavior shifts,2-3 bullets or short paragraphs,data-backed) -> Core Strategy Pillars(4-6 named pillars or trends,NOT numbered steps,each has bold sub-label + 2-3 paragraphs + supporting data or insight callout) -> Key Insight callouts(standalone data lines mid-section,format: bold sourced stat (source and year) or qualitative point + 1-sentence context) -> Industry or Regional Application section(contextualizes strategy for a specific market,vertical,or geography relevant to the topic) -> "Key Takeaways" section(3-5 bullets or short paragraphs,forward-looking,synthesizes the pillars) -> Callbox closing CTA(positioned as a trusted long-term partner,references multichannel approach + proven results,NEVER listed among competitors,1 hard CTA). Rules: NO FAQ section. Strategy blogs close with Key Takeaways then Callbox CTA only. Stats must appear in at least 3 sections. Each pillar must connect back to business growth or pipeline impact. Callbox appears only in the closing section.`;
 
-const VOICE_ARTICLE = `Role:SEO & AEO Content Strategist for Callbox Inc (callboxinc.com). Style:human,editorial,personality-driven,peer-to-peer,EEAT. NEVER em dashes. Format:ONLY "## " headings,bold key phrases,mix of short paragraphs and bullets. Structure: Hook(1-3 sentences,punchy and personality-driven, can be a relatable scenario,a bold statement,a quote,or a metaphor. NO corporate opener. Keyword must appear within first 50-100 words) -> "What this Blog Covers" section(1 short conversational paragraph telling the reader exactly what they will get,friendly tone) -> Context or Why It Matters section(2-3 short paragraphs or bullets,frames the problem or market reality,light data or observation,no heavy stats dump) -> Core Body Sections(thematic sections NOT numbered steps NOT named pillars,each uses bold inline sub-labels or questions as mini-subheadings inside flowing prose mixed with bullets,editorial and conversational throughout) -> Inline callouts(short bold questions or statements used as visual breaks inside sections) -> Regional or Audience Breakdown section(optional but include when topic has geographic or segment angle,short and specific) -> Key Takeaways section(3-5 lines max,punchy,forward-looking,no fluff) -> FAQ section(optional,include when topic has common buyer questions,4-6 questions,answers written like a real person not a bot,direct and warm) -> Closing CTA(warm and conversational,1-2 sentences + one action prompt,NO hard sell language). Rules: This is the most human and creative blog type. Humor,metaphors,and personality are encouraged. Less data-heavy than Strategy. Less instructional than How-To. Callbox appears naturally in the body once as a soft proof point and once in the closing CTA. NEVER list Callbox among competitors.`;
+const VOICE_ARTICLE = `Role:SEO & AEO Content Strategist for Callbox Inc (callboxinc.com). Style:human,editorial,personality-driven,peer-to-peer,EEAT. NEVER em dashes. Format:"## " main headings and "### " sub-headings,bold key phrases,mix of short paragraphs and bullets. Structure: Hook(1-3 sentences,punchy and personality-driven, can be a relatable scenario,a bold statement,a quote,or a metaphor. NO corporate opener. Keyword must appear within first 50-100 words) -> "What this Blog Covers" section(1 short conversational paragraph telling the reader exactly what they will get,friendly tone) -> Context or Why It Matters section(2-3 short paragraphs or bullets,frames the problem or market reality,light data or observation,no heavy stats dump) -> Core Body Sections(thematic sections NOT numbered steps NOT named pillars,each uses bold inline sub-labels or questions as mini-subheadings inside flowing prose mixed with bullets,editorial and conversational throughout) -> Inline callouts(short bold questions or statements used as visual breaks inside sections) -> Regional or Audience Breakdown section(optional but include when topic has geographic or segment angle,short and specific) -> Key Takeaways section(3-5 lines max,punchy,forward-looking,no fluff) -> FAQ section(optional,include when topic has common buyer questions,4-6 questions,answers written like a real person not a bot,direct and warm) -> Closing CTA(warm and conversational,1-2 sentences + one action prompt,NO hard sell language). Rules: This is the most human and creative blog type. Humor,metaphors,and personality are encouraged. Less data-heavy than Strategy. Less instructional than How-To. Callbox appears naturally in the body once as a soft proof point and once in the closing CTA. NEVER list Callbox among competitors.`;
 
 const lt = { bg: "#fff", sf: "#f7f7f8", cd: "#fff", bd: "#e5e5e5", tx: "#1a1a1a", ts: "#6b6b6b", ac: "#2a2a2a", tb: "#f0f0f0", tt: "#4a4a4a", ib: "#fff", tg: "#e5e5e5", ea: "#1a1a1a", eb: "#f7f7f8", et: "#1a1a1a", eA: "#fff", sT: "#2a7a2a", hc: "#fafafa" };
 const dk = { bg: "#121212", sf: "#1a1a1a", cd: "#1e1e1e", bd: "#2a2a2a", tx: "#e0e0e0", ts: "#888", ac: "#e0e0e0", tb: "#2a2a2a", tt: "#aaa", ib: "#1a1a1a", tg: "#333", ea: "#e0e0e0", eb: "#1e1e1e", et: "#c0c0c0", eA: "#121212", sT: "#88cc88", hc: "#252525" };
@@ -312,10 +313,22 @@ function GeoCheckCard({ content, t, compact }) {
         </span>
       </div>
       {items.map((x) => (
-        <div key={x.id} style={{ display: "flex", gap: 8, alignItems: "baseline", fontSize: 12, lineHeight: 1.6, color: t.tx, marginBottom: 4 }}>
-          <span style={{ width: 14, flexShrink: 0, fontWeight: 700, color: x.pass ? t.sT : t.ts }}>{x.pass ? "✓" : "✗"}</span>
-          <span style={{ flex: 1 }}>{x.label}</span>
-          <span style={{ color: t.ts, textAlign: "right" }}>{x.detail}</span>
+        <div key={x.id} style={{ marginBottom: 4 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "baseline", fontSize: 12, lineHeight: 1.6, color: t.tx }}>
+            <span style={{ width: 14, flexShrink: 0, fontWeight: 700, color: x.pass ? t.sT : t.ts }}>{x.pass ? "✓" : "✗"}</span>
+            <span style={{ flex: 1 }}>{x.label}</span>
+            <span style={{ color: t.ts, textAlign: "right" }}>{x.detail}</span>
+          </div>
+          {x.list && x.list.length > 0 && (
+            <details style={{ marginLeft: 22, fontSize: 12, color: t.ts }}>
+              <summary style={{ cursor: "pointer" }}>Show sentences</summary>
+              <ul style={{ margin: "4px 0 0", paddingLeft: 18, lineHeight: 1.6 }}>
+                {x.list.map((s, i) => (
+                  <li key={i}>{s}</li>
+                ))}
+              </ul>
+            </details>
+          )}
         </div>
       ))}
       <div style={{ fontSize: 11, color: t.ts, marginTop: 8 }}>{compact ? "Informational only. Apply is never blocked." : "Informational only. Exports are never blocked."}</div>
@@ -497,13 +510,13 @@ const activeVoice =
     setOptKw(null);
     try {
       const raw = await callAI(
-        'Blog Callbox Inc."' + customTitle + '" PK:"' + customPK + '"' + (customSK ? ' SK:"' + customSK + '"' : "") + " Cat:" + customCat + ". " + btP + " " + activeVoice + ' ONLY JSON:{meta_description,excerpt,content(' + bt.min + "-" + bt.max + 'ch,"## " headings plus the GEO formats,' + YEAR + "),service,industries}",
+        'Blog Callbox Inc."' + customTitle + '" PK:"' + customPK + '"' + (customSK ? ' SK:"' + customSK + '"' : "") + " Cat:" + customCat + ". " + btP + " " + activeVoice + ' ONLY JSON:{meta_description,excerpt,content(' + bt.min + "-" + bt.max + 'ch,"## " main headings and "### " sub-headings plus the GEO formats,' + YEAR + "),service,industries}",
         4096,
         true
       );
       const p = parseJSON(raw);
       if (p) {
-        const full = { ...stub, ...p, title: customTitle, blogType, savedAt: new Date().toISOString() };
+        const full = { ...stub, ...p, content: normalizeContent(p.content), title: customTitle, blogType, savedAt: new Date().toISOString() };
         setSelTopic(full);
         setBucket((prev) => {
           const ex = prev.find((b) => b.title === customTitle);
@@ -552,13 +565,13 @@ const activeVoice =
     setOptKw(null);
     try {
       const raw = await callAI(
-        'Blog Callbox Inc."' + tp.title + '" "' + tp.hook + '" svc:' + tp.service + ". " + btP + " " + activeVoice + ' ONLY JSON:{meta_description,excerpt,content(' + bt.min + "-" + bt.max + 'ch,"## " headings plus the GEO formats,' + YEAR + ")}",
+        'Blog Callbox Inc."' + tp.title + '" "' + tp.hook + '" svc:' + tp.service + ". " + btP + " " + activeVoice + ' ONLY JSON:{meta_description,excerpt,content(' + bt.min + "-" + bt.max + 'ch,"## " main headings and "### " sub-headings plus the GEO formats,' + YEAR + ")}",
         4096,
         true
       );
       const p = parseJSON(raw);
       if (p) {
-        const full = { ...stub, ...p, blogType, savedAt: new Date().toISOString() };
+        const full = { ...stub, ...p, content: normalizeContent(p.content), blogType, savedAt: new Date().toISOString() };
         setSelTopic(full);
         setBucket((prev) => {
           const ex = prev.find((b) => b.title === tp.title);
@@ -610,9 +623,9 @@ const activeVoice =
       const kw = parseJSON(kwRaw);
       setOptKw(kw);
       setOptResult(
-        await callAI(
-          "Optimize Callbox article. De-humanize+SEO. Recs:" + ((kw && kw.recommendations) || []).join(";") + ". " + bt.label + ":" + bt.min + "-" + bt.max + 'ch. ONLY "## " headings. ONLY text. GEO CHECKLIST: keep or add the 40-60 word Quick Answer blockquote near the top; each ## section starts with a direct answer sentence; paragraphs max 3 sentences; convert multi-attribute comparisons to markdown tables and processes to numbered lists; remove throat-clearing intros; do not add statistics that are not already in the article; use "> " for callouts.\n\n' + selTopic.content
-        )
+        normalizeContent(await callAI(
+          "Optimize Callbox article. De-humanize+SEO. Recs:" + ((kw && kw.recommendations) || []).join(";") + ". " + bt.label + ":" + bt.min + "-" + bt.max + 'ch. Use "## " main headings and "### " sub-headings only, never "# " or "####", and no Table of Contents. ONLY text. GEO CHECKLIST: keep or add the 40-60 word Quick Answer blockquote near the top; each ## section starts with a direct answer sentence; paragraphs max 3 sentences; convert multi-attribute comparisons to markdown tables and processes to numbered lists; remove throat-clearing intros; do not add statistics that are not already in the article; use "> " for callouts.\n\n' + selTopic.content
+        ))
       );
     } catch (e) {
       fail(e);
@@ -643,7 +656,7 @@ const activeVoice =
       const factLock =
         "FACT LOCK: Do not add, remove, round or change any number, percentage, dollar amount, company name, client name or claim. Every figure in the output must already appear in the original text. Do not add new mentions of Callbox beyond the original count. Keep the first sentence of each ## section a direct answer. When shortening to fit the character range, cut descriptive body sentences first and never cut the Quick Answer, tables, numbered lists, FAQ, or the closing call to action. When lengthening, add explanation only, never new statistics.";
       setBpRewriteResult(
-        await callAI(
+        normalizeContent(await callAI(
           typeLine +
             "Rewrite this Callbox blog article with a " +
             bpTone +
@@ -655,7 +668,7 @@ const activeVoice =
             factLock +
             "\n\n" +
             item.content
-        )
+        ))
       );
     } catch (e) {
       fail(e);
@@ -710,13 +723,7 @@ const activeVoice =
 
   const dlDoc = (tp) => {
     const safeName = (tp.title || "article").replace(/[^a-z0-9 _-]/gi, "").trim().replace(/\s+/g, "-").toLowerCase();
-    const h = blocksToHtml(tp.content || "").replace(
-      /(?:<p>- [^]*?<\/p>)+/g,
-      (run) =>
-        "<ul>" +
-        run.replace(/<p>- ([^]*?)<\/p>/g, "<li>$1</li>") +
-        "</ul>"
-    );
+    const h = blocksToHtml(tp.content || "");
     const b = new Blob(
       ["\ufeff", "<html><head><meta charset='utf-8'></head><body style='font-family:Arial;max-width:700px;margin:40px auto;line-height:1.7'><h1>" + escHtml(tp.title || "") + "</h1>" + h + "</body></html>"],
       { type: "application/msword" }
@@ -729,6 +736,23 @@ const activeVoice =
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(u);
+  };
+
+  const cpHtml = async (tp) => {
+    const html = blocksToHtml(tp.content || "");
+    try {
+      if (!navigator.clipboard || typeof navigator.clipboard.write !== "function" || typeof ClipboardItem === "undefined") throw new Error("unsupported");
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          "text/html": new Blob([html], { type: "text/html" }),
+          "text/plain": new Blob([blocksToPlainText(tp.content || "")], { type: "text/plain" }),
+        }),
+      ]);
+      setCopied("cpHtml");
+      setTimeout(() => setCopied(null), 2000);
+    } catch {
+      copyText(html, setCopied, "cpHtml");
+    }
   };
 
   const cpAll = (tp) => {
@@ -1034,6 +1058,11 @@ const activeVoice =
                       <Tip text={TOOLTIPS.copyall}>
                         <button onClick={() => cpAll(selTopic)} style={btnS(false)}>
                           {copied === "cpAll" ? "✓ Copied!" : "📋 Copy All"}
+                        </button>
+                      </Tip>
+                      <Tip text="Copy formatted content to paste into WordPress or Google Docs as real headings, lists and tables">
+                        <button onClick={() => cpHtml(selTopic)} style={btnS(false)}>
+                          {copied === "cpHtml" ? "✓ Copied!" : "Copy as HTML"}
                         </button>
                       </Tip>
                       <Tip text={TOOLTIPS.download}>
