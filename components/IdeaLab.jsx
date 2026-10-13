@@ -8,6 +8,8 @@ import { writingInstruction } from "../lib/writingInstruction";
 import { proofPointsBlock } from "../lib/proofPoints";
 import { parseBlocks, escHtml, blocksToHtml, blocksToPlainText } from "../lib/contentBlocks";
 import { geoCheck } from "../lib/geoCheck";
+import { MAX_FACTS, emptyFact, isIncompleteFact, approvedNumbers, approvedFactsBlock } from "../lib/approvedFacts";
+import { MAX_ATTEMPTS, validateArticle, regenerationNote } from "../lib/postCheck";
 import { normalizeContent } from "../lib/normalizeContent";
 import { extractSections, buildGraphicsPrompt, normalizePlan, resolveSlots, withImagePlaceholders, altTextList, imageSheet, TOOL_LABEL } from "../lib/graphicsPlan";
 
@@ -334,8 +336,39 @@ function Content({ text, t, imageSlots }) {
   return <div>{children}</div>;
 }
 
-function GeoCheckCard({ content, t, compact, graphics }) {
-  const items = geoCheck(content, graphics);
+function ApprovedFactsEditor({ facts, setFacts, t }) {
+  const cell = { padding: "8px 10px", borderRadius: 8, border: "1px solid " + t.bd, background: t.tb, color: t.tx, fontSize: 13, width: "100%", boxSizing: "border-box" };
+  const update = (i, key, value) => setFacts((prev) => prev.map((f, idx) => (idx === i ? { ...f, [key]: value } : f)));
+  const remove = (i) => setFacts((prev) => (prev.length === 1 ? [emptyFact()] : prev.filter((_, idx) => idx !== i)));
+  const hasIncomplete = facts.some(isIncompleteFact);
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <label style={{ fontSize: 13, fontWeight: 600, display: "block", marginBottom: 4 }}>Approved facts (optional)</label>
+      <div style={{ fontSize: 12, color: t.ts, marginBottom: 8 }}>
+        Add up to {MAX_FACTS} verified statistics. Each needs the statistic, its source and a four-digit year. Only complete rows are used; the article cites each one with its source and year.
+      </div>
+      {facts.map((f, i) => (
+        <div key={i} style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input aria-label={"Statistic " + (i + 1)} value={f.stat} onChange={(e) => update(i, "stat", e.target.value)} placeholder="Statistic, e.g. 61% of B2B buyers prefer rep-free buying" style={{ ...cell, flex: "3 1 220px", width: "auto" }} />
+          <input aria-label={"Source " + (i + 1)} value={f.source} onChange={(e) => update(i, "source", e.target.value)} placeholder="Source, e.g. Gartner" style={{ ...cell, flex: "2 1 140px", width: "auto" }} />
+          <input aria-label={"Year " + (i + 1)} value={f.year} onChange={(e) => update(i, "year", e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="Year" inputMode="numeric" style={{ ...cell, flex: "0 1 80px", width: 80 }} />
+          <button type="button" onClick={() => remove(i)} aria-label={"Remove fact " + (i + 1)} style={{ ...cell, width: "auto", cursor: "pointer" }}>
+            Remove
+          </button>
+        </div>
+      ))}
+      {facts.length < MAX_FACTS && (
+        <button type="button" onClick={() => setFacts((prev) => [...prev, emptyFact()])} style={{ ...cell, width: "auto", cursor: "pointer" }}>
+          Add fact
+        </button>
+      )}
+      {hasIncomplete && <div style={{ fontSize: 12, color: "#e0a030", marginTop: 8 }}>Some rows are missing a statistic, source or year, so they will be ignored.</div>}
+    </div>
+  );
+}
+
+function GeoCheckCard({ content, t, compact, graphics, approvedNums }) {
+  const items = geoCheck(content, graphics, approvedNums);
   const passed = items.filter((x) => x.pass).length;
   return (
     <div style={compact ? { padding: "10px 14px", borderTop: "1px solid " + t.bd, background: t.cd } : { marginTop: 24, padding: 16, borderRadius: 12, background: t.cd, border: "1px solid " + t.bd }}>
@@ -413,6 +446,7 @@ export default function IdeaLab() {
   const [customTitle, setCustomTitle] = useState("");
   const [customPK, setCustomPK] = useState("");
   const [customSK, setCustomSK] = useState("");
+  const [approvedFacts, setApprovedFacts] = useState([emptyFact()]);
   const [customCat, setCustomCat] = useState(CATS[0]);
   const [customLoading, setCustomLoading] = useState(false);
   const [abInd, setAbInd] = useState("Any");
@@ -462,7 +496,7 @@ export default function IdeaLab() {
 const activeVoice =
 (blogType === "listicle" ? VOICE_LISTICLE : blogType === "howto" ? VOICE_HOWTO : blogType === "strategy" ? VOICE_STRATEGY : blogType === "article" ? VOICE_ARTICLE : VOICE) +
 (blogType === "article" ? "\n\nARTICLE ORDER: keep the punchy hook first, then place the Quick Answer within roughly the first 100 words." : "") +
-"\n\n" + GEO_RULES + "\n\n" + writingInstruction(new Date().toLocaleString("en-US", { month: "long", year: "numeric" })) + "\n\n" + proofPointsBlock();
+"\n\n" + GEO_RULES + "\n\n" + writingInstruction(new Date().toLocaleString("en-US", { month: "long", year: "numeric" })) + "\n\n" + proofPointsBlock() + "\n\n" + approvedFactsBlock(approvedFacts);
 
   const fail = (e) => setAiError((e && e.message) || "Something went wrong. Please try again.");
   const unreadable = () => setAiError("The AI response could not be read. Please try again.");
@@ -532,6 +566,28 @@ const activeVoice =
     }
   };
 
+  // Runs the code-side checks after each generation and regenerates with the failures
+  // spelled out. Keeps the attempt with the fewest failures if none passes.
+  const generateChecked = async (prompt) => {
+    let best = null;
+    let note = "";
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      const p = parseJSON(await callAI(prompt + note, 4096, true));
+      if (p) {
+        const content = normalizeContent(p.content);
+        const failures = validateArticle({ metaTitle: p.meta_title, metaDescription: p.meta_description, content });
+        if (!best || failures.length < best.failures.length) best = { parsed: { ...p, content }, failures, attempts: attempt + 1 };
+        if (!failures.length) break;
+        note = regenerationNote(failures);
+      }
+    }
+    return best;
+  };
+
+  const reportChecks = (res) => {
+    if (res.failures.length) setAiError("Saved after " + MAX_ATTEMPTS + " attempts, but these checks still fail: " + res.failures.join(" "));
+  };
+
   const genCustom = async () => {
     if (!customTitle.trim()) return;
     setAiError("");
@@ -545,14 +601,12 @@ const activeVoice =
     setOptDone(false);
     setOptKw(null);
     try {
-      const raw = await callAI(
-        'Blog Callbox Inc."' + customTitle + '" PK:"' + customPK + '"' + (customSK ? ' SK:"' + customSK + '"' : "") + " Cat:" + customCat + ". " + btP + " " + activeVoice + ' ONLY JSON:{meta_description,excerpt,content(' + bt.min + "-" + bt.max + 'ch,"## " main headings and "### " sub-headings plus the GEO formats,' + YEAR + "),service,industries}",
-        4096,
-        true
+      const res = await generateChecked(
+        'Blog Callbox Inc."' + customTitle + '" PK:"' + customPK + '"' + (customSK ? ' SK:"' + customSK + '"' : "") + " Cat:" + customCat + ". " + btP + " " + activeVoice + ' ONLY JSON:{meta_title(max 60 chars),meta_description(max 155 chars),excerpt,content(' + bt.min + "-" + bt.max + 'ch,"## " main headings and "### " sub-headings plus the GEO formats,' + YEAR + "),service,industries}"
       );
-      const p = parseJSON(raw);
-      if (p) {
-        const full = { ...stub, ...p, content: normalizeContent(p.content), title: customTitle, blogType, graphics: null, savedAt: new Date().toISOString() };
+      if (res) {
+        reportChecks(res);
+        const full = { ...stub, ...res.parsed, title: customTitle, blogType, graphics: null, savedAt: new Date().toISOString() };
         setSelTopic(full);
         setBucket((prev) => {
           const ex = prev.find((b) => b.title === customTitle);
@@ -600,14 +654,12 @@ const activeVoice =
     setOptDone(false);
     setOptKw(null);
     try {
-      const raw = await callAI(
-        'Blog Callbox Inc."' + tp.title + '" "' + tp.hook + '" svc:' + tp.service + ". " + btP + " " + activeVoice + ' ONLY JSON:{meta_description,excerpt,content(' + bt.min + "-" + bt.max + 'ch,"## " main headings and "### " sub-headings plus the GEO formats,' + YEAR + ")}",
-        4096,
-        true
+      const res = await generateChecked(
+        'Blog Callbox Inc."' + tp.title + '" "' + tp.hook + '" svc:' + tp.service + ". " + btP + " " + activeVoice + ' ONLY JSON:{meta_title(max 60 chars),meta_description(max 155 chars),excerpt,content(' + bt.min + "-" + bt.max + 'ch,"## " main headings and "### " sub-headings plus the GEO formats,' + YEAR + ")}"
       );
-      const p = parseJSON(raw);
-      if (p) {
-        const full = { ...stub, ...p, content: normalizeContent(p.content), blogType, graphics: null, savedAt: new Date().toISOString() };
+      if (res) {
+        reportChecks(res);
+        const full = { ...stub, ...res.parsed, blogType, graphics: null, savedAt: new Date().toISOString() };
         setSelTopic(full);
         setBucket((prev) => {
           const ex = prev.find((b) => b.title === tp.title);
@@ -821,6 +873,7 @@ const activeVoice =
 
   const cpAll = (tp) => {
     let x = (tp.title || "").toUpperCase() + "\n" + "=".repeat(40) + "\n\n";
+    if (tp.meta_title) x += "Meta title: " + tp.meta_title + "\n";
     if (tp.meta_description) x += "Meta: " + tp.meta_description + "\n\n";
     if (tp.excerpt) x += tp.excerpt + "\n\n---\n\n";
     x += blocksToPlainText(exportContent(tp));
@@ -1013,6 +1066,11 @@ const activeVoice =
                     </span>
                   ))}
                 </div>
+                {selTopic.meta_title && (
+                  <div style={{ fontSize: 13, color: t.ts, padding: "10px 14px", background: t.tb, borderRadius: 8, borderLeft: "3px solid " + t.ac, marginBottom: 12 }}>
+                    <b>Meta title:</b> {selTopic.meta_title}
+                  </div>
+                )}
                 {selTopic.meta_description && (
                   <div style={{ fontSize: 13, color: t.ts, padding: "10px 14px", background: t.tb, borderRadius: 8, borderLeft: "3px solid " + t.ac, marginBottom: 12 }}>
                     <b>Meta:</b> {selTopic.meta_description}
@@ -1031,7 +1089,7 @@ const activeVoice =
                     </>
                   );
                 })()}
-                {selTopic.content && <GeoCheckCard content={selTopic.content} t={t} graphics={graphics} />}
+                {selTopic.content && <GeoCheckCard content={selTopic.content} t={t} graphics={graphics} approvedNums={approvedNumbers(approvedFacts)} />}
 
                 {selTopic.content && (
                   <div style={{ marginTop: 24, padding: 20, borderRadius: 12, background: t.cd, border: "1px solid " + t.bd }}>
@@ -1312,6 +1370,7 @@ const activeVoice =
                     </div>
                   )}
                 </div>
+                <ApprovedFactsEditor facts={approvedFacts} setFacts={setApprovedFacts} t={t} />
                 {!selEvent && !loading && topics.length === 0 && (
                   <div style={{ padding: 40, borderRadius: 12, border: "2px dashed " + t.bd, textAlign: "center" }}>
                     <div style={{ fontSize: 32, marginBottom: 10 }}>📅</div>
@@ -1343,6 +1402,7 @@ const activeVoice =
                   </select>
                 </div>
                 <div style={{ marginBottom: 18 }}>{btSel}</div>
+                <ApprovedFactsEditor facts={approvedFacts} setFacts={setApprovedFacts} t={t} />
                 <Tip text="Generate the full article using your inputs">
                   <button
                     onClick={genCustom}
@@ -1382,6 +1442,7 @@ const activeVoice =
                   </div>
                   {btSel}
                 </div>
+                <ApprovedFactsEditor facts={approvedFacts} setFacts={setApprovedFacts} t={t} />
                 <Tip text={TOOLTIPS.abrakada}>
                   <button onClick={genAbrakada} disabled={abLoading} style={{ ...btnS(true), fontSize: 14, padding: "10px 28px", opacity: abLoading ? 0.5 : 1 }}>
                     {abLoading ? "✨ Conjuring..." : "✨ Abrakada!"}
@@ -1652,7 +1713,7 @@ const activeVoice =
                                 <div style={{ padding: 14, maxHeight: 300, overflowY: "auto" }}>
                                   <Content text={bpRewriteResult} t={t} />
                                 </div>
-                                <GeoCheckCard content={bpRewriteResult} t={t} compact />
+                                <GeoCheckCard content={bpRewriteResult} t={t} compact approvedNums={approvedNumbers(approvedFacts)} />
                               </div>
                             )}
                           </div>
