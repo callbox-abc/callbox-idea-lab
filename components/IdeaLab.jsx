@@ -630,7 +630,13 @@ const activeVoice =
 
   const dlDoc = (tp) => {
     const safeName = (tp.title || "article").replace(/[^a-z0-9 _-]/gi, "").trim().replace(/\s+/g, "-").toLowerCase();
-    const h = blocksToHtml(tp.content || "");
+    const h = blocksToHtml(tp.content || "").replace(
+      /(?:<p>- [^]*?<\/p>)+/g,
+      (run) =>
+        "<ul>" +
+        run.replace(/<p>- ([^]*?)<\/p>/g, "<li>$1</li>") +
+        "</ul>"
+    );
     const b = new Blob(
       ["\ufeff", "<html><head><meta charset='utf-8'></head><body style='font-family:Arial;max-width:700px;margin:40px auto;line-height:1.7'><h1>" + escHtml(tp.title || "") + "</h1>" + h + "</body></html>"],
       { type: "application/msword" }
@@ -1354,7 +1360,7 @@ const activeVoice =
 
         {tab === 3 && (
           <div>
-            <b style={{ fontSize: 16 }}>🔢 Character Counter</b>
+            <b style={{ fontSize: 16 }}>�� Character Counter</b>
             <div style={{ display: "flex", gap: 10, margin: "14px 0" }}>
               {[
                 ["Characters", cStats.c, "Total number of characters"],
